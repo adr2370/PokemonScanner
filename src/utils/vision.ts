@@ -57,7 +57,7 @@ Example response format: ["Pikachu", "Charizard", "Mewtwo"]`;
     generationConfig: {
       temperature: 0.1, // Low temperature for more precise matching
       topP: 0.8,
-      maxOutputTokens: 1024,
+      maxOutputTokens: 8192, // Increased to account for model's thinking tokens
     },
   };
 
