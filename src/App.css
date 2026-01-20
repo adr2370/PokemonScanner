@@ -675,3 +675,50 @@
 .empty-state.small p {
   font-size: 0.85rem;
 }
+
+/* Debug Panel */
+.debug-panel {
+  background: #1a1a2e;
+  border: 1px solid #444;
+  border-radius: 8px;
+  margin-top: 1rem;
+  overflow: hidden;
+}
+
+.debug-header {
+  background: #444;
+  color: #fff;
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.debug-content {
+  padding: 0.75rem;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.debug-section {
+  font-size: 0.8rem;
+  color: #ccc;
+}
+
+.debug-section strong {
+  color: #fff;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.debug-section pre {
+  background: #0d0d1a;
+  padding: 0.5rem;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.75rem;
+  color: #0f0;
+  margin: 0;
+  max-height: 150px;
+  overflow-y: auto;
+}

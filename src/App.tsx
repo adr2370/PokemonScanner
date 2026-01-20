@@ -3,7 +3,7 @@ import './App.css';
 import type { AppSettings, ScanResult, TabType } from './types';
 import { loadSettings, saveSettings, loadMissingList, saveMissingList } from './utils/storage';
 import { fetchSheetData } from './utils/sheets';
-import { findMissingPokemonWithOCR } from './utils/ocr';
+import { findMissingPokemonWithOCR, ScanDebugInfo } from './utils/ocr';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabType>('scan');
@@ -19,6 +19,7 @@ function App() {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState('');
+  const [debugInfo, setDebugInfo] = useState<ScanDebugInfo | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -167,6 +168,9 @@ function App() {
           missingList,
           (progress) => {
             setScanStatus(progress.status);
+          },
+          (debug) => {
+            setDebugInfo(debug);
           }
         );
 
@@ -383,6 +387,19 @@ function App() {
               className="hidden-input"
               onChange={handleFileSelect}
             />
+
+            {/* Debug Panel */}
+            {debugInfo && (
+              <div className="debug-panel">
+                <div className="debug-header">OCR Debug</div>
+                <div className="debug-content">
+                  <div className="debug-section">
+                    <strong>Raw OCR Text:</strong>
+                    <pre>{debugInfo.rawText || '(empty)'}</pre>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Results (when camera is off) */}
             {!isCameraActive && scanResults.length > 0 && (
