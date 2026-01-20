@@ -3,21 +3,28 @@ import './App.css';
 import type { AppSettings, ScanResult, TabType } from './types';
 import { loadSettings, saveSettings, loadMissingList, saveMissingList } from './utils/storage';
 import { fetchSheetData } from './utils/sheets';
-import { findMissingPokemonInImage } from './utils/vision';
+import { findMissingPokemonWithOCR } from './utils/ocr';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabType>('scan');
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const [missingList, setMissingList] = useState<string[]>(loadMissingList);
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [scanResults, setScanResults] = useState<ScanResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'loading'; text: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Camera state
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState('');
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const scanningRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // Save settings when they change
   useEffect(() => {
@@ -28,6 +35,20 @@ function App() {
   useEffect(() => {
     saveMissingList(missingList);
   }, [missingList]);
+
+  // Cleanup camera on unmount or tab change
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  // Stop camera when leaving scan tab
+  useEffect(() => {
+    if (activeTab !== 'scan') {
+      stopCamera();
+    }
+  }, [activeTab]);
 
   const handleSettingChange = (key: keyof AppSettings, value: string) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -55,82 +76,188 @@ function App() {
     }
   };
 
-  const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        setIsCameraActive(true);
+
+        // Start continuous scanning
+        startContinuousScanning();
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      setStatusMessage({
+        type: 'error',
+        text: 'Could not access camera. Please check permissions.'
+      });
+    }
+  };
+
+  const stopCamera = () => {
+    scanningRef.current = false;
+    setIsScanning(false);
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setIsCameraActive(false);
+  };
+
+  const captureFrame = useCallback((): string | null => {
+    if (!videoRef.current || !canvasRef.current) return null;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx || video.videoWidth === 0) return null;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0);
+
+    return canvas.toDataURL('image/jpeg', 0.8);
+  }, []);
+
+  const startContinuousScanning = useCallback(() => {
+    if (missingList.length === 0) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Please load your missing list first in Settings'
+      });
+      return;
+    }
+
+    scanningRef.current = true;
+    setIsScanning(true);
+
+    const scanLoop = async () => {
+      if (!scanningRef.current) return;
+
+      const frame = captureFrame();
+      if (!frame) {
+        // Retry after a short delay if frame capture failed
+        setTimeout(scanLoop, 500);
+        return;
+      }
+
+      setScanStatus('Scanning...');
+
+      try {
+        const foundPokemon = await findMissingPokemonWithOCR(
+          frame,
+          missingList,
+          (progress) => {
+            setScanStatus(progress.status);
+          }
+        );
+
+        if (foundPokemon.length > 0) {
+          const results: ScanResult[] = foundPokemon.map(name => ({
+            name,
+            status: 'need' as const,
+            confidence: 1.0,
+          }));
+          setScanResults(results);
+        }
+
+        setScanStatus('');
+      } catch (error) {
+        console.error('Scan error:', error);
+      }
+
+      // Continue scanning after a delay (1.5 seconds between scans)
+      if (scanningRef.current) {
+        setTimeout(scanLoop, 1500);
+      }
+    };
+
+    scanLoop();
+  }, [captureFrame, missingList]);
+
+  // Restart scanning when missing list changes and camera is active
+  useEffect(() => {
+    if (isCameraActive && missingList.length > 0 && !scanningRef.current) {
+      startContinuousScanning();
+    }
+  }, [isCameraActive, missingList, startContinuousScanning]);
+
+  const handleFileSelect = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Stop camera if running
+    stopCamera();
+
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result as string;
-      setCapturedImage(result);
-      setScanResults([]);
+    reader.onload = async (e) => {
+      const imageData = e.target?.result as string;
+
+      if (missingList.length === 0) {
+        setStatusMessage({ type: 'error', text: 'Please load your missing list first' });
+        return;
+      }
+
+      setIsLoading(true);
+      setLoadingMessage('Scanning image...');
+
+      try {
+        const foundPokemon = await findMissingPokemonWithOCR(
+          imageData,
+          missingList,
+          (progress) => {
+            setLoadingMessage(progress.status);
+          }
+        );
+
+        const results: ScanResult[] = foundPokemon.map(name => ({
+          name,
+          status: 'need' as const,
+          confidence: 1.0,
+        }));
+
+        setScanResults(results);
+
+        if (results.length === 0) {
+          setStatusMessage({ type: 'success', text: 'No missing Pokemon found in this image' });
+        } else {
+          setStatusMessage({ type: 'success', text: `Found ${results.length} from your missing list!` });
+        }
+      } catch (error) {
+        setStatusMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : 'Failed to scan image'
+        });
+      } finally {
+        setIsLoading(false);
+        setLoadingMessage('');
+      }
     };
     reader.readAsDataURL(file);
 
-    // Reset input so same file can be selected again
     event.target.value = '';
-  }, []);
+  }, [missingList]);
 
-  const handleScan = async () => {
-    if (!capturedImage) {
-      setStatusMessage({ type: 'error', text: 'Please capture or select an image first' });
-      return;
-    }
-
-    if (!settings.visionApiKey) {
-      setStatusMessage({ type: 'error', text: 'Please enter your Gemini API key in Settings' });
-      setActiveTab('settings');
-      return;
-    }
-
-    if (missingList.length === 0) {
-      setStatusMessage({ type: 'error', text: 'Please load your missing list from Google Sheets first' });
-      setActiveTab('settings');
-      return;
-    }
-
-    setIsLoading(true);
-    setLoadingMessage('Analyzing image with Gemini AI...');
-    setStatusMessage(null);
-
-    try {
-      // Send image and missing list to Gemini 3 Pro
-      const foundPokemon = await findMissingPokemonInImage(
-        capturedImage,
-        missingList,
-        settings.visionApiKey
-      );
-
-      // Create results - only show Pokemon from our missing list that were found
-      const results: ScanResult[] = foundPokemon.map(name => ({
-        name,
-        status: 'need' as const,
-        confidence: 1.0,
-      }));
-
-      setScanResults(results);
-
-      if (results.length === 0) {
-        setStatusMessage({
-          type: 'success',
-          text: 'No missing Pokemon found in this image'
-        });
-      } else {
-        setStatusMessage({
-          type: 'success',
-          text: `Found ${results.length} Pokemon from your missing list!`
-        });
-      }
-
-    } catch (error) {
-      setStatusMessage({
-        type: 'error',
-        text: error instanceof Error ? error.message : 'Failed to scan image'
-      });
-    } finally {
-      setIsLoading(false);
-      setLoadingMessage('');
-    }
+  const clearResults = () => {
+    setScanResults([]);
   };
 
   const filteredMissingList = missingList.filter(card =>
@@ -186,22 +313,69 @@ function App() {
         {/* Scan Tab */}
         {activeTab === 'scan' && (
           <div className="scanner-panel">
-            {/* Capture Zone */}
-            <div
-              className={`capture-zone ${capturedImage ? 'has-image' : ''}`}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {capturedImage ? (
-                <img src={capturedImage} alt="Captured" className="preview-image" />
-              ) : (
-                <>
+            {/* Camera View */}
+            <div className="camera-container">
+              <video
+                ref={videoRef}
+                className={`camera-video ${isCameraActive ? 'active' : ''}`}
+                playsInline
+                muted
+              />
+              <canvas ref={canvasRef} className="hidden-canvas" />
+
+              {!isCameraActive && (
+                <div className="camera-placeholder">
                   <div className="capture-icon">📷</div>
-                  <p className="capture-text">Tap to select a photo of your cards</p>
-                </>
+                  <p>Tap "Start Camera" to begin scanning</p>
+                </div>
+              )}
+
+              {/* Scanning indicator */}
+              {isScanning && (
+                <div className="scanning-indicator">
+                  <div className="scan-line"></div>
+                  {scanStatus && <span className="scan-status">{scanStatus}</span>}
+                </div>
+              )}
+
+              {/* Live results overlay */}
+              {isCameraActive && scanResults.length > 0 && (
+                <div className="live-results">
+                  <div className="live-results-header">
+                    <span>Found: {scanResults.length}</span>
+                    <button onClick={clearResults} className="btn-clear">Clear</button>
+                  </div>
+                  <div className="live-results-list">
+                    {scanResults.map((result, index) => (
+                      <div key={index} className="live-result-item">
+                        {result.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* Hidden File Inputs */}
+            {/* Camera Controls */}
+            <div className="camera-controls">
+              {!isCameraActive ? (
+                <button className="btn-camera-start" onClick={startCamera}>
+                  📷 Start Camera
+                </button>
+              ) : (
+                <button className="btn-camera-stop" onClick={stopCamera}>
+                  ⏹️ Stop Camera
+                </button>
+              )}
+
+              <button
+                className="btn-gallery"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                🖼️ From Gallery
+              </button>
+            </div>
+
             <input
               ref={fileInputRef}
               type="file"
@@ -209,42 +383,9 @@ function App() {
               className="hidden-input"
               onChange={handleFileSelect}
             />
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden-input"
-              onChange={handleFileSelect}
-            />
 
-            {/* Capture Actions */}
-            <div className="capture-actions">
-              <button
-                className="btn-capture"
-                onClick={() => cameraInputRef.current?.click()}
-              >
-                📷 Camera
-              </button>
-              <button
-                className="btn-capture"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                🖼️ Gallery
-              </button>
-            </div>
-
-            {/* Scan Button */}
-            <button
-              className="btn-scan"
-              onClick={handleScan}
-              disabled={!capturedImage || isLoading}
-            >
-              {isLoading ? 'Scanning...' : 'Scan for Missing Cards'}
-            </button>
-
-            {/* Results */}
-            {scanResults.length > 0 && (
+            {/* Results (when camera is off) */}
+            {!isCameraActive && scanResults.length > 0 && (
               <div className="results-panel">
                 <div className="results-summary">
                   <div className="summary-card missing">
@@ -254,7 +395,7 @@ function App() {
                 </div>
 
                 <div className="results-list">
-                  <h3>Missing Pokemon in Photo</h3>
+                  <h3>Missing Pokemon Found</h3>
                   {scanResults.map((result, index) => (
                     <div key={index} className="result-item">
                       <span className="result-name">{result.name}</span>
@@ -262,6 +403,12 @@ function App() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {missingList.length === 0 && (
+              <div className="empty-state small">
+                <p>Load your missing list in Settings to start scanning</p>
               </div>
             )}
           </div>
@@ -361,19 +508,6 @@ function App() {
             >
               {isLoading ? 'Loading...' : 'Load Missing List'}
             </button>
-
-            <div className="setting-group">
-              <label>Google Gemini API Key</label>
-              <input
-                type="password"
-                placeholder="Enter your API key"
-                value={settings.visionApiKey}
-                onChange={(e) => handleSettingChange('visionApiKey', e.target.value)}
-              />
-              <p className="setting-hint">
-                Get an API key from Google AI Studio (aistudio.google.com)
-              </p>
-            </div>
 
             {missingList.length > 0 && (
               <div className="status-message success">
