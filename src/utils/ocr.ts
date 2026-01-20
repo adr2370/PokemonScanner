@@ -38,9 +38,6 @@ export async function findMissingPokemonWithOCR(
           });
         }
       },
-    }, {
-      tessedit_pageseg_mode: '11', // Sparse text - find as much text as possible
-      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -\'',
     });
 
     onProgress?.({ status: 'Matching Pokemon names...', progress: 85 });

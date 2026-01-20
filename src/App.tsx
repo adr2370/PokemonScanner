@@ -3,7 +3,8 @@ import './App.css';
 import type { AppSettings, ScanResult, TabType } from './types';
 import { loadSettings, saveSettings, loadMissingList, saveMissingList } from './utils/storage';
 import { fetchSheetData } from './utils/sheets';
-import { findMissingPokemonWithOCR, ScanDebugInfo } from './utils/ocr';
+import { findMissingPokemonWithOCR } from './utils/ocr';
+import type { ScanDebugInfo } from './utils/ocr';
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabType>('scan');
