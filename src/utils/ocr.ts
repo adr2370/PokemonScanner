@@ -20,10 +20,6 @@ export async function findMissingPokemonWithOCR(
   onProgress?: (progress: ScanProgress) => void,
   onDebug?: (debug: ScanDebugInfo) => void
 ): Promise<string[]> {
-  if (missingList.length === 0) {
-    return [];
-  }
-
   onProgress?.({ status: 'Initializing OCR...', progress: 0 });
 
   try {
@@ -57,7 +53,9 @@ export async function findMissingPokemonWithOCR(
       matchAttempts: []
     };
 
-    const matches = matchPokemonNames(extractedText, missingList, debugInfo);
+    const matches = missingList.length > 0
+      ? matchPokemonNames(extractedText, missingList, debugInfo)
+      : [];
 
     onDebug?.(debugInfo);
     onProgress?.({ status: 'Done!', progress: 100 });
