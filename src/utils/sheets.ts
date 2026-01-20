@@ -113,7 +113,7 @@ export function findMatchingCard(
     if (normalizedCard.includes(normalizedDetected) || normalizedDetected.includes(normalizedCard)) {
       const similarity = Math.min(normalizedDetected.length, normalizedCard.length) /
                         Math.max(normalizedDetected.length, normalizedCard.length);
-      if (similarity > 0.7) {
+      if (similarity > 0.5) {
         return { match: card, confidence: similarity };
       }
     }
@@ -129,7 +129,7 @@ export function findMatchingCard(
     const maxLen = Math.max(normalizedDetected.length, normalizedCard.length);
     const similarity = 1 - (distance / maxLen);
 
-    if (similarity > bestScore && similarity > 0.75) {
+    if (similarity > bestScore && similarity > 0.6) {
       bestScore = similarity;
       bestMatch = card;
     }
