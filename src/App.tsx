@@ -186,6 +186,7 @@ function App() {
         setScanStatus('');
       } catch (error) {
         console.error('Scan error:', error);
+        setScanStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
       }
 
       // Continue scanning after a delay (1.5 seconds between scans)
@@ -389,13 +390,16 @@ function App() {
             />
 
             {/* Debug Panel */}
-            {debugInfo && (
+            {isCameraActive && (
               <div className="debug-panel">
                 <div className="debug-header">OCR Debug</div>
                 <div className="debug-content">
                   <div className="debug-section">
+                    <strong>Status:</strong> {scanStatus || 'Waiting...'}
+                  </div>
+                  <div className="debug-section">
                     <strong>Raw OCR Text:</strong>
-                    <pre>{debugInfo.rawText || '(empty)'}</pre>
+                    <pre>{debugInfo?.rawText || '(no text detected yet)'}</pre>
                   </div>
                 </div>
               </div>
